@@ -152,7 +152,11 @@ func parseDate(c *cli.Context, paramName string) time.Time {
 	var parsedDate time.Time
 	var err error
 	if parsedDate, err = dateparse.ParseAny(c.String(paramName)); err != nil {
-		log.Fatal().Err(err).Msgf("invalid %s parameter = %s", paramName, c.String(paramName))
+		if duration, err := time.ParseDuration(c.String(paramName)); err != nil {
+			log.Fatal().Err(err).Msgf("invalid %s parameter = %s", paramName, c.String(paramName))
+		} else {
+			parsedDate = time.Now().Add(-duration)
+		}
 	}
 	return parsedDate
 }
