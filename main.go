@@ -107,6 +107,11 @@ func main() {
 			Usage:   "output logs to console format instead of json",
 			EnvVars: []string{"CH_FLAME_LOG_TO_CONSOLE"},
 		},
+		&cli.BoolFlag{
+			Name:    "compare",
+			Usage:   "compare result for query stat",
+			EnvVars: []string{"CH_FLAME_COMPARE"},
+		},
 	}
 
 	app.Action = run
@@ -199,12 +204,20 @@ func prepareTLSConfig(dsn string, c *cli.Context) {
 }
 
 func generate(c *cli.Context) error {
+	// For compare mode
+	var stats []string                                // Unique stat names
+	queryIdMap := make(map[string]bool)               // map[query_id]true
+	var queryIdSlice []string                         // []query_id
+	queriesStat := make(map[string]map[string]uint64) // map[stat]map[query_id]value
+
 	cluster := c.String("clickhouse-cluster")
 	queryFilter := c.String("query-filter")
 	queryIds := c.StringSlice("query-ids")
 	dsn := c.String("dsn")
 	dateFrom := parseDate(c, "date-from")
 	dateTo := parseDate(c, "date-to")
+
+	compareMode := c.Bool("compare")
 
 	prepareTLSConfig(dsn, c)
 
@@ -269,7 +282,26 @@ func generate(c *cli.Context) error {
 		)
 		if len(profileNames) > 0 {
 			fmt.Printf("\tProfile stat\n")
+			if compareMode {
+				if len(stats) == 0 {
+					stats = append(stats, profileNames...) // empty stat, append all
+					for i := 0; i < len(profileNames); i++ {
+						queriesStat[profileNames[i]] = make(map[string]uint64)
+					}
+				}
+				if _, ok := queryIdMap[queryId]; !ok {
+					queryIdMap[queryId] = true
+					queryIdSlice = append(queryIdSlice, queryId)
+				}
+			}
 			for i := 0; i < len(profileNames) && i < len(profileValues); i++ {
+				if compareMode {
+					if _, ok := queriesStat[profileNames[i]]; !ok {
+						stats = append(stats, profileNames[i]) // append new stat
+						queriesStat[profileNames[i]] = make(map[string]uint64)
+					}
+					queriesStat[profileNames[i]][queryId] = profileValues[i]
+				}
 				fmt.Printf("%50s %10d\n", profileNames[i], profileValues[i])
 			}
 		}
@@ -278,6 +310,27 @@ func generate(c *cli.Context) error {
 
 		return nil
 	})
+
+	if compareMode && len(queryIdSlice) > 0 {
+		fmt.Printf("\n%50s", "Compare stat")
+		for _, id := range queryIdSlice {
+			fmt.Printf(" %36s", id)
+		}
+		fmt.Printf("\n")
+		for _, stat := range stats {
+			fmt.Printf("%50s", stat)
+			if s, okStat := queriesStat[stat]; okStat {
+				for _, id := range queryIdSlice {
+					if v, okVal := s[id]; okVal {
+						fmt.Printf(" %36d", v)
+					} else {
+						fmt.Printf(" %36s", "-") // not found
+					}
+				}
+				fmt.Printf("\n")
+			}
+		}
+	}
 
 	return nil
 }
